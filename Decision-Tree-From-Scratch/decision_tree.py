@@ -25,30 +25,55 @@ class Node:
 
 
 # TODO Define Some Important Metric Functions
-def entropy(train_data, feature_index=None, feature_value=None):
+def entropy(train_data, feature_index=None):
     # TODO Define Entropy Function
+    if train_data.shape[0] == 0:
+        return 0.0
     ent = 0
-    if feature_index is not None and feature_value is not None:
-        avail_examples = train_data[train_data[:, feature_index] == feature_value]
+    if feature_index is not None:
+        # Define P(x)
+        positive_p = train_data[train_data[:, -1] == 1].shape[0] / train_data.shape[0]
+        negative_p = train_data[train_data[:, -1] == 0].shape[0] / train_data.shape[0]
+
+        # Define P(x, y)
+        positive_negative_p = train_data[np.logical_and(train_data[:, -1] == 0, train_data[:, feature_index] == 1)].shape[0] / \
+                              train_data.shape[0]  # p(x,y)
+        positive_positive_p = train_data[np.logical_and(train_data[:, -1] == 1, train_data[:, feature_index] == 1)].shape[0] / \
+                              train_data.shape[0]
+        negative_positive_p = train_data[np.logical_and(train_data[:, -1] == 1, train_data[:, feature_index] == 0)].shape[0] / \
+                              train_data.shape[0]
+        negative_negative_p = train_data[np.logical_and(train_data[:, -1] == 0, train_data[:, feature_index] == 0)].shape[0] / \
+                              train_data.shape[0]
+
+        # Calculate H(Y|X)
+        if positive_negative_p != 0 and positive_p != 0:
+            ent -= positive_negative_p * math.log2(positive_negative_p / positive_p)
+        if positive_positive_p != 0 and positive_p != 0:
+            ent -= positive_positive_p * math.log2(positive_positive_p / positive_p)
+        if negative_positive_p != 0 and negative_p != 0:
+            ent -= negative_positive_p * math.log2(negative_positive_p / negative_p)
+        if negative_negative_p != 0 and negative_p != 0:
+            ent -= negative_negative_p * math.log2(negative_negative_p / negative_p)
     else:
-        avail_examples = train_data
-    positive_p = avail_examples[avail_examples[:, -1] == 1].shape[0] / avail_examples.shape[0]
-    negative_p = avail_examples[avail_examples[:, -1] == 0].shape[0] / avail_examples.shape[0]
-    if positive_p != 0.0:
-        ent -= positive_p * math.log2(positive_p)
-    if negative_p != 0.0:
-        ent -= negative_p * math.log2(negative_p)
+        # Define P(x)
+        positive_p = train_data[train_data[:, -1] == 1].shape[0] / train_data.shape[0]
+        negative_p = train_data[train_data[:, -1] == 0].shape[0] / train_data.shape[0]
+
+        # Calculate H(X)
+        if positive_p != 0.0:
+            ent -= positive_p * math.log2(positive_p)
+        if negative_p != 0.0:
+            ent -= negative_p * math.log2(negative_p)
+
     return ent
 
 
 def mutual_information(train_data, feature_index):
     # TODO Define Mutual_Information Function
     hy = entropy(train_data)  # (H(Y)
-    hyx_negative = entropy(train_data, feature_index, 0)  # H(Y|X=0)
-    hyx_positive = entropy(train_data, feature_index, 1)  # H(Y|X=1)
-    px_negative = train_data[train_data[feature_index == 0]].shape[0] / train_data.shape[0]  # p(X=0)
-    px_positive = train_data[train_data[feature_index == 1]].shape[0] / train_data.shape[0]  # p(X=1)
-    mi = hy - px_negative * hyx_negative - px_positive * hyx_positive  # H(Y) - P(X=0)H(Y|X=0) - P(X=1)H(Y|X=1)
+    hyx = entropy(train_data, feature_index)  # H(Y|X)
+    mi = hy - hyx  # H(Y) - H(Y|X)
+
     return mi
 
 
@@ -93,38 +118,24 @@ def train(train_data, max_depth):
 
 
 def tree_recurse(train_data, max_depth, depth=0, visited=None):
-    if depth > max_depth:
-        return None
-
     if visited is None:
         visited = []
 
     node = Node()
-    best_mi = None
-    best_feature = None
-    for feature_index in range(train_data.shape[1] - 1):
-        if feature_index in visited:
-            continue
 
-        mi = mutual_information(train_data, feature_index)
-        if best_mi is None:
-            best_mi = mi
-            best_feature = feature_index
+    # Check if features are identical
+    identical = False
+    if train_data.shape[0] != 0:
+        features = train_data[0, :-1]
+        for i in range(1, train_data.shape[0]):
+            if train_data[i, :-1].tolist() != features.tolist():
+                break
+            if i == train_data.shape[0] - 1:
+                identical = True
 
-        elif best_mi < mi:
-            best_mi = mi
-            best_feature = feature_index
-
-
-    if best_mi is not None:
-        node.attr = best_feature
-        left_data, right_data = divide_data(train_data, best_feature)
-        node.left_len = left_data.shape[0]
-        node.right_len = right_data.shape[0]
-        node.left = tree_recurse(left_data, max_depth, depth + 1, visited + [best_feature])
-        node.right = tree_recurse(right_data, max_depth, depth + 1, visited + [best_feature])
-        node.type = 'inter'
-    else:
+    # Other stopping criterion
+    if depth >= max_depth or train_data.shape[0] == 0 or max(train_data[:, -1]) == min(
+            train_data[:, -1]) or identical or len(visited) == train_data.shape[1] - 1:
         left_data, right_data = divide_data(train_data, -1)
         node.left_len = left_data.shape[0]
         node.right_len = right_data.shape[0]
@@ -133,7 +144,35 @@ def tree_recurse(train_data, max_depth, depth=0, visited=None):
             node.vote = 1
         else:
             node.vote = 0
+    else:
+        best_mi = None
+        best_feature = None
+        for feature_index in range(train_data.shape[1] - 1):
+            if feature_index in visited:
+                continue
+            mi = mutual_information(train_data, feature_index)
 
+            if best_mi is None or best_mi < mi:
+                best_mi = mi
+                best_feature = feature_index
+
+        if best_mi >= 0:
+            node.attr = best_feature
+            left_data, right_data = divide_data(train_data, best_feature)
+            node.left_len = left_data.shape[0]
+            node.right_len = right_data.shape[0]
+            node.left = tree_recurse(left_data, max_depth, depth + 1, visited + [best_feature])
+            node.right = tree_recurse(right_data, max_depth, depth + 1, visited + [best_feature])
+            node.type = 'inter'
+        else:
+            left_data, right_data = divide_data(train_data, -1)
+            node.left_len = left_data.shape[0]
+            node.right_len = right_data.shape[0]
+            node.type = 'leaf'
+            if node.left_len <= node.right_len:
+                node.vote = 1
+            else:
+                node.vote = 0
 
     return node
 
@@ -161,7 +200,6 @@ def predict_sample(root, example):
                 break
 
             curr_node = curr_node.right
-
 
     return curr_node.vote
 
